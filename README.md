@@ -9,7 +9,7 @@ Implemented as a Docker container it will automatically refresh and deploy intel
 and report the generated alerts via mail (originally a local mail spool).
 
 # Intel feeds
-- [x] [Emerging Threats (Open)](https://www.proofpoint.com/us/products/et-intelligence)
+- [x] [Emerging Threats (open ruleset)](https://www.proofpoint.com/us/products/et-intelligence)
   - Emerging Threats Pro is supported with a provided oinkcode
   - NB Emerging Threats Open is 30 days behind Emerging Threats Pro
 
