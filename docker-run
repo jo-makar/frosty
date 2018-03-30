@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# TODO Make these mount points configurable in config.json
+
+docker run \
+    -v /etc/suricata:/etc/suricata \
+    -v /var/log/suricata:/var/log/suricata \
+    -v /var/run/suricata-command.socket:/var/run/suricata-command.socket \
+    osint-suricata:latest
