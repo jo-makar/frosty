@@ -50,6 +50,63 @@ unix-comand:
   filename: /var/run/suricata-command.socket
 ```
 
+If necessary restart Suricata with `systemctl restart suricata`.
+
+## Mail transfer agent
+An MTA must be enabled on the Docker host to relay mails (even if it ultimately
+goes to a local mail spool).
+
+As an example, on Debian 9 EXIM4 can be configured to relay mails from Docker
+containers by updating the following lines in /etc/exim4/update-exim4.conf.conf:
+```
+dc_local_interfaces='127.0.0.1 ; ::1 ; 172.17.0.1'
+...
+dc_relay_nets='172.17.0.0/16'
+```
+Where 172.17.0.1 is the address assigned to the docker0 interface on the host.
+
+Restart EXIM4 with `systemctl restart exim4` as needed.
+
+Verify sending mail from within the container with the following:
+`docker exec -it $(docker ps | awk '$2 == "osint-suricata:latest" {print $1}') python3`
+```pycon
+Python 3.5.3 (default, Jan 19 2017, 14:11:04)
+[GCC 6.3.0 20170118] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+>>> import smtplib
+>>> smtp = smtplib.SMTP('172.17.0.1')
+>>> smtp.set_debuglevel(True)
+>>> smtp.sendmail('jom@bravo', 'jom@bravo', 'test 1')
+send: 'ehlo [172.17.0.2]\r\n'
+reply: b'250-bravo Hello [172.17.0.2] [172.17.0.2]\r\n'
+reply: b'250-SIZE 52428800\r\n'
+reply: b'250-8BITMIME\r\n'
+reply: b'250-PIPELINING\r\n'
+reply: b'250-PRDR\r\n'
+reply: b'250 HELP\r\n'
+reply: retcode (250); Msg: b'bravo Hello [172.17.0.2] [172.17.0.2]\nSIZE 52428800\n8BITMIME\nPIPELINING\nPRDR\nHELP'
+send: 'mail FROM:<jom@bravo> size=6\r\n'
+reply: b'250 OK\r\n'
+reply: retcode (250); Msg: b'OK'
+send: 'rcpt TO:<jom@bravo>\r\n'
+reply: b'250 Accepted\r\n'
+reply: retcode (250); Msg: b'Accepted'
+send: 'data\r\n'
+reply: b'354 Enter message, ending with "." on a line by itself\r\n'
+reply: retcode (354); Msg: b'Enter message, ending with "." on a line by itself'
+data: (354, b'Enter message, ending with "." on a line by itself')
+send: b'test 1\r\n.\r\n'
+reply: b'250 OK id=1f2JWh-0000Yv-HM\r\n'
+reply: retcode (250); Msg: b'OK id=1f2JWh-0000Yv-HM'
+data: (250, b'OK id=1f2JWh-0000Yv-HM')
+{}
+>>>
+```
+
+The test mail should now appear in bravo:/var/spool/mail/jom.
+
+Reference: https://gehrcke.de/2014/07/discourse-docker-container-send-mail-through-exim/
+
 ## osint-suricata
 Modify the osint-suricata config.json as needed.
 
