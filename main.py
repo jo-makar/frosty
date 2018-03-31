@@ -1,3 +1,4 @@
+import intel.et
 from suricata import *
 import json, logging, os, pprint, queue, signal, smtplib, sys, threading, time
 
@@ -13,6 +14,9 @@ class EventParser(threading.Thread):
     def run(self):
         evefile = open('/var/log/suricata/eve.json', 'r')
         evefile.seek(0, os.SEEK_END)
+
+        since = time.time()
+        count = 0
 
         # FIXME Does this survive log rotation? Verify at 6:25
         while not self.stop:
@@ -31,6 +35,13 @@ class EventParser(threading.Thread):
             if record.get('event_type') == 'alert':
                 logging.debug('\n' + pprint.pformat(record))
                 notifier.alerts.put(record)
+                count += 1
+
+            if time.time() - since >= 60:
+                if count > 0:
+                    logging.info('%u alerts generated', count)
+                since = time.time()
+                count = 0
 
             # TODO Consider reporting metrics or accumulated stats (daily?).
             #      Perhaps to start a report on flows (top most contacted IPs).
@@ -78,6 +89,27 @@ class Notifier(threading.Thread):
         smtp.quit()
 
 
+class Downloader(threading.Thread):
+    def __init__(self, config):
+        threading.Thread.__init__(self, daemon=False)
+
+        self.stop = False
+        self.config = config
+
+
+    def run(self):
+        last = {}
+
+        l = intel.et.install(config, self)
+        if not l:
+            self.stop = True
+        last['et'] = l
+
+        while not self.stop:
+            # FIXME STOPPED
+            time.sleep(1)
+
+
 if __name__ == '__main__':
     def stop(signum, frame):
         logging.info('received signal %d', signum)
@@ -98,15 +130,16 @@ if __name__ == '__main__':
         logging.error('unable to communicate with suricata')
         sys.exit(1)
     logging.info('suricata version = %s', ver)
-    config.update({'ver': ver})
+    config.update({'version': ver})
 
     # TODO Would be good to verify "conf-get outputs.eve-log.enabled"
     #      but this does not seem to be supported by the interface currently
 
     notifier = Notifier(config)
     parser = EventParser(config, notifier)
+    downloader = Downloader(config)
 
-    threads = [notifier, parser]
+    threads = [notifier, parser, downloader]
     for t in threads:
         t.start()
 
@@ -128,10 +161,5 @@ if __name__ == '__main__':
             break
 
         time.sleep(1)
-            
-
-    # FIXME
-    # Define another thread to download intel (separate class for each, start with intel/et.py)
-    # ET pro url: https://rules.emergingthreatspro.com/<oink>/suricata-3.2.1/etpro.rules.tar.gz
 
 # vim: set textwidth=80

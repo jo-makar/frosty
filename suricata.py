@@ -82,3 +82,5 @@ def suricata_version():
         return None
 
     return mat.group(0)
+
+# vim: set textwidth=80
