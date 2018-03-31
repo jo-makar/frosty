@@ -123,7 +123,7 @@ Launch the docker container with `docker-run` (which is essentially
 ```sh
 $ grep 'TOR Known Tor Exit Node' /etc/suricata/rules/osint-suricata-et.rules | head -1
 alert ip [103.234.220.195,103.234.220.197,103.236.201.110,103.250.73.13,103.27.124.82,103.28.52.93,103.29.70.23,103.3.61.114,103.8.79.229,104.192.0.58] any -> $HOME_NET any (msg:"ET TOR Known Tor Exit Node Traffic group 1"; reference:url,doc.emergingthreats.net/bin/view/Main/TorRules; threshold: type limit, track by_src, seconds 60, count 1; classtype:misc-attack; flowbits:set,ET.TorIP; sid:2520000; rev:3281;)
-$ ping 103.234.220.195
+$ ping -c 1 103.234.220.195
 PING 103.234.220.195 (103.234.220.195) 56(84) bytes of data.
 64 bytes from 103.234.220.195: icmp_seq=1 ttl=45 time=264 ms
 
@@ -132,7 +132,45 @@ PING 103.234.220.195 (103.234.220.195) 56(84) bytes of data.
 rtt min/avg/max/mdev = 264.849/264.849/264.849/0.000 ms
 $
 ```
+
 There should now be a mail with alert in configured (config.json) mail spool.
+```sh
+$ mail
+"/var/mail/jom": 1 message 1 new
+>N   1 jom@bravo          Sat Mar 31 18:28  44/1300
+?
+Return-path: <jom@bravo>
+Envelope-to: jom@bravo
+Delivery-date: Sat, 31 Mar 2018 18:28:53 -0400
+Received: from [172.17.0.2]
+        by bravo with esmtp (Exim 4.89)
+        (envelope-from <jom@bravo>)
+        id 1f2OzU-0000wq-K8
+        for jom@bravo; Sat, 31 Mar 2018 18:28:52 -0400
+Message-Id: <E1f2OzU-0000wq-K8@bravo>
+From: jom@bravo
+Date: Sat, 31 Mar 2018 18:28:52 -0400
+
+{'alert': {'action': 'allowed',
+           'category': 'Misc Attack',
+           'gid': 1,
+           'rev': 3281,
+           'severity': 2,
+           'signature': 'ET TOR Known Tor Exit Node Traffic group 1',
+           'signature_id': 2520000},
+ 'dest_ip': '192.168.0.109',
+ 'event_type': 'alert',
+ 'icmp_code': 0,
+ 'icmp_type': 0,
+ 'in_iface': 'wls3',
+ 'proto': 'ICMP',
+ 'src_ip': '103.234.220.195',
+ 'timestamp': '2018-03-31T18:28:51.845763-0400'}
+? d
+? q
+Held 0 messages in /var/mail/jom
+$
+```
 
 # TODO
 - Steps for the docker container to start at boot

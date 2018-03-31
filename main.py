@@ -70,18 +70,36 @@ class Notifier(threading.Thread):
                 while not self.alerts.empty() and len(alerts) < 10:
                     alerts += [self.alerts.get()]
 
-                smtp.sendmail(self.config['mailtofrom'],
-                              self.config['mailtofrom'],
-                              '\r\n' + '\n\n'.join(map(lambda a: pprint.pformat(a),
-                                                       alerts)))
+                once = True
+                while once:
+                    try:
+                        smtp.sendmail(
+                            self.config['mailtofrom'],
+                            self.config['mailtofrom'],
+                            '\r\n' + '\n\n'.join(map(lambda a: pprint.pformat(a),
+                                                     alerts)))
+                        break
+
+                    # SMTP command timeout
+                    except smtplib.SMTPSenderRefused:
+                        once = False
+                        smtp = smtplib.SMTP(self.config['smtpserver'])
 
                 for i in range(len(alerts)):
                     self.alerts.task_done()
 
             elif not self.others.empty():
-                smtp.sendmail(self.config['mailtofrom'],
-                              self.config['mailtofrom'],
-                              self.others.get())
+                once = True
+                while once:
+                    try:
+                        smtp.sendmail(self.config['mailtofrom'],
+                                      self.config['mailtofrom'],
+                                      self.others.get())
+                        break
+                    except smtplib.SMTPSenderRefused:
+                        once = False
+                        smtp = smtplib.SMTP(self.config['smtpserver'])
+
                 self.others.task_done()
 
             else:
