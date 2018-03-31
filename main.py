@@ -1,5 +1,5 @@
 from suricata import *
-import json, logging, os, pprint, queue, signal, sys, threading, time
+import json, logging, os, pprint, queue, signal, smtplib, sys, threading, time
 
 
 class EventParser(threading.Thread):
@@ -25,11 +25,11 @@ class EventParser(threading.Thread):
                 record = json.loads(line)
             except:
                 logging.exception('line = %r', line)
-                # FIXME Send an email indicating a problem
+                # TODO Consider sending an email with the exception
                 self.stop = True
 
-            if record.get('event_type') == 'flow': # FIXME alert
-                logging.info('\n' + pprint.pformat(record))
+            if record.get('event_type') == 'alert':
+                logging.debug('\n' + pprint.pformat(record))
                 notifier.alerts.put(record)
 
             # TODO Consider reporting metrics or accumulated stats (daily?).
@@ -50,16 +50,39 @@ class Notifier(threading.Thread):
 
 
     def run(self):
+        smtp = smtplib.SMTP(self.config['smtpserver'])
+
         while not self.stop:
-            # FIXME STOPPED Consume alerts and send local mails
-            time.sleep(1)
+            if not self.alerts.empty():
+                alerts = [self.alerts.get()]
+                while not self.alerts.empty() and len(alerts) < 10:
+                    alerts += [self.alerts.get()]
+
+                smtp.sendmail(self.config['mailtofrom'],
+                              self.config['mailtofrom'],
+                              '\r\n' + '\n\n'.join(map(lambda a: pprint.pformat(a),
+                                                       alerts)))
+
+                for i in range(len(alerts)):
+                    self.alerts.task_done()
+
+            elif not self.others.empty():
+                smtp.sendmail(self.config['mailtofrom'],
+                              self.config['mailtofrom'],
+                              self.others.get())
+                self.others.task_done()
+
+            else:
+                time.sleep(1)
+
+        smtp.quit()
 
 
 if __name__ == '__main__':
     def stop(signum, frame):
         logging.info('received signal %d', signum)
 
-        for t in [notifier, parser]:
+        for t in threads:
             t.stop = True
             t.join()
 
@@ -81,13 +104,31 @@ if __name__ == '__main__':
     #      but this does not seem to be supported by the interface currently
 
     notifier = Notifier(config)
-    notifier.start()
-
     parser = EventParser(config, notifier)
-    parser.start()
+
+    threads = [notifier, parser]
+    for t in threads:
+        t.start()
 
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
+
+    while True:
+        stopall = False
+        for t in threads:
+            if not t.is_alive():
+                stopall = True
+                break
+
+        if stopall:
+            for t in threads:
+                if t.is_alive():
+                    t.stop = True
+                    t.join()
+            break
+
+        time.sleep(1)
+            
 
     # FIXME
     # Define another thread to download intel (separate class for each, start with intel/et.py)
