@@ -59,10 +59,10 @@ def install(config, thread):
             
         logging.info('%u ET rules files found', len(rules))
 
-        with open('/etc/suricata/rules/osint-suricata-et.rules', 'w') as masterfile:
+        with open('/etc/suricata/rules/osint-suricata-et.rules', 'w', encoding='utf-8') as masterfile:
             alerts = 0
             for path in rules:
-                with open(path) as rulefile:
+                with open(path, 'r', encoding='utf-8') as rulefile:
                     for line in rulefile:
                         if line.startswith('alert '):
                             alerts += 1
