@@ -18,7 +18,7 @@ class EventParser(threading.Thread):
         since = time.time()
         count = 0
 
-        # FIXME Does this survive log rotation? Verify at 6:25
+        # FIXME Does this work after log rotation? Verify at 6:25
         while not self.stop:
             line = evefile.readline()
             if not line:
@@ -39,7 +39,8 @@ class EventParser(threading.Thread):
 
             if time.time() - since >= 60:
                 if count > 0:
-                    logging.info('%u alerts generated', count)
+                    logging.info('%u alert%s generated',
+                                 count, '' if count == 1 else 's')
                 since = time.time()
                 count = 0
 
@@ -98,16 +99,37 @@ class Downloader(threading.Thread):
 
 
     def run(self):
-        last = {}
+        lastupdate = {}
 
-        l = intel.et.install(config, self)
-        if not l:
+        last = intel.et.install(config, self)
+        if last:
+            lastupdate['et'] = last
+            if not suricata_reloadrules():
+                self.stop = True
+        else:
             self.stop = True
-        last['et'] = l
+
+        since = time.time()
 
         while not self.stop:
-            # FIXME STOPPED
             time.sleep(1)
+
+            if time.time() - since >= 3600:
+                last = intel.et.latest(config)
+                logging.info('et last modified: %s', last)
+
+                if last > lastupdate['et']:
+                    last2 = intel.et.install(config, self)
+                    if last2:
+                        lastupdate['et'] = last
+                        if not suricata_reloadrules():
+                            # TODO Consider sending an email about the failure
+                            pass
+                    else:
+                        # TODO Consider sending an email about the failure
+                        pass
+
+                since = time.time()
 
 
 if __name__ == '__main__':

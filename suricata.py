@@ -31,7 +31,7 @@ def _connect():
     return sock
 
 
-def _command(sock, cmd, args={}, full=False):
+def _command(sock, cmd, args={}, full=False, wait=True):
     outjson = {'command': cmd}
     if args:
         outjson['arguments'] = args
@@ -39,6 +39,10 @@ def _command(sock, cmd, args={}, full=False):
     outbuf = bytearray(json.dumps(outjson), 'utf-8')
     sock.sendall(outbuf)
     logging.debug('>>> %r', outbuf)
+
+    if not wait:
+        return True
+
     inbuf = sock.recv(_INBUFLEN)
     logging.debug('<<< %r', inbuf)
 
@@ -82,5 +86,21 @@ def suricata_version():
         return None
 
     return mat.group(0)
+
+
+def suricata_reloadrules():
+    sock = _connect()
+    if not sock:
+        return False
+
+    # TODO Better to check if rules are not currently loading first.
+    #      Can be done by parsing the log and looking for specific lines.
+
+    # This will block until the operation is completed and return:
+    #     {"message": "done", "return": "OK"}
+    rv = _command(sock, 'reload-rules', wait=False)
+
+    sock.close()
+    return rv
 
 # vim: set textwidth=80

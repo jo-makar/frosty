@@ -21,6 +21,10 @@ is set appropriately for the host machine.
 
 For monitoring several interfaces reference: http://pevma.blogspot.com/2015/05/suricata-multiple-interface.html
 
+Be aware that when monitoring multiple interfaces that they should all have an
+UP status even if one or more are not in use.  Otherwise (depending on the
+version of Suricata, buf for at least 3.2.1), rule reloads will not complete.
+
 Back up existing rules and the config file:
 ```sh
 sudo mv /etc/suricata/rules /etc/suricata/rules.orig && sudo mkdir /etc/suricata/rules
@@ -116,7 +120,25 @@ Launch the docker container with `docker-run` (which is essentially
 `docker run osint-suricata:latest` with bind mounts).
 
 # Try it out!
-FIXME Lookup an alert that can be generated via curl
+```sh
+$ grep 'TOR Known Tor Exit Node' /etc/suricata/rules/osint-suricata-et.rules | head -1
+alert ip [103.234.220.195,103.234.220.197,103.236.201.110,103.250.73.13,103.27.124.82,103.28.52.93,103.29.70.23,103.3.61.114,103.8.79.229,104.192.0.58] any -> $HOME_NET any (msg:"ET TOR Known Tor Exit Node Traffic group 1"; reference:url,doc.emergingthreats.net/bin/view/Main/TorRules; threshold: type limit, track by_src, seconds 60, count 1; classtype:misc-attack; flowbits:set,ET.TorIP; sid:2520000; rev:3281;)
+$ ping 103.234.220.195
+PING 103.234.220.195 (103.234.220.195) 56(84) bytes of data.
+64 bytes from 103.234.220.195: icmp_seq=1 ttl=45 time=264 ms
+
+--- 103.234.220.195 ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+rtt min/avg/max/mdev = 264.849/264.849/264.849/0.000 ms
+$
+```
+There should now be a mail with alert in configured (config.json) mail spool.
+
+# TODO
+- Steps for the docker container to start at boot
+  - Be aware the unix socket isn't available until rules are loaded
+- Taskbar notification for emails/alerts
+- Taskbar notification if the docker container is not running
 
 # License
 This work is released to the public domain.
