@@ -15,14 +15,21 @@ class EventParser(threading.Thread):
         evefile = open('/var/log/suricata/eve.json', 'r')
         evefile.seek(0, os.SEEK_END)
 
-        since = time.time()
-        count = 0
+        alerts_since = time.time()
+        alerts_count = 0
 
-        # FIXME Does this work after log rotation? Verify at 6:25
+        errors_total = []
+
         while not self.stop:
             line = evefile.readline()
             if not line:
-                time.sleep(0.1)
+                # Reopen if EOF (due to log file rotation)
+                # FIXME Verify this works at 6:25
+                if not evefile.closed:
+                    time.sleep(0.1)
+                else:
+                    evefile = open('/var/log/suricata/eve.json', 'r')
+                    evefile.seek(0, os.SEEK_END)
                 continue
 
             try:
@@ -30,19 +37,25 @@ class EventParser(threading.Thread):
             except:
                 logging.exception('line = %r', line)
                 # TODO Consider sending an email with the exception
-                self.stop = True
+
+                # Abort if more than 10 errors in 24 hours
+                errors_total += [time.time()]
+                errors_total = list(filter(lambda t: time.time()-t < 24*60*60,
+                                           errors_total))
+                if len(errors_total) > 10:
+                    self.stop = True
 
             if record.get('event_type') == 'alert':
                 logging.debug('\n' + pprint.pformat(record))
                 notifier.alerts.put(record)
-                count += 1
+                alerts_count += 1
 
-            if time.time() - since >= 60:
-                if count > 0:
+            if time.time() - alerts_since >= 60:
+                if alerts_count > 0:
                     logging.info('%u alert%s generated',
-                                 count, '' if count == 1 else 's')
-                since = time.time()
-                count = 0
+                                 alerts_count, '' if alerts_count == 1 else 's')
+                alerts_since = time.time()
+                alerts_count = 0
 
             # TODO Consider reporting metrics or accumulated stats (daily?).
             #      Perhaps to start a report on flows (top most contacted IPs).
@@ -83,7 +96,7 @@ class Notifier(threading.Thread):
 
                         logging.info('sent a mail with %u alerts', len(alerts))
 
-                        # Abort if more than 100 alerts (not mails) per 24 hours
+                        # Abort if more than 100 alerts (not mails) in 24 hours
                         total += [time.time() * len(alerts)]
                         total = list(filter(lambda t: time.time()-t < 24*60*60, total))
                         if len(total) > 100:
