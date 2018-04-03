@@ -172,12 +172,6 @@ Held 0 messages in /var/mail/jom
 $
 ```
 
-# TODO
-- Steps for the docker container to start at boot
-  - Be aware the unix socket isn't available until rules are loaded
-- Taskbar notification for emails/alerts
-- Taskbar notification if the docker container is not running
-
 # License
 This work is released to the public domain.
 

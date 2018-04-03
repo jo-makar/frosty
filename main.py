@@ -64,6 +64,8 @@ class Notifier(threading.Thread):
     def run(self):
         smtp = smtplib.SMTP(self.config['smtpserver'])
 
+        total = []
+
         while not self.stop:
             if not self.alerts.empty():
                 alerts = [self.alerts.get()]
@@ -78,6 +80,15 @@ class Notifier(threading.Thread):
                             self.config['mailtofrom'],
                             '\r\n' + '\n\n'.join(map(lambda a: pprint.pformat(a),
                                                      alerts)))
+
+                        logging.info('sent a mail with %u alerts', len(alerts))
+
+                        # Abort if more than 100 alerts (not mails) per 24 hours
+                        total += [time.time() * len(alerts)]
+                        total = list(filter(lambda t: time.time()-t < 24*60*60, total))
+                        if len(total) > 100:
+                            self.stop = True
+
                         break
 
                     # SMTP command timeout
