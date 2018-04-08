@@ -1,6 +1,7 @@
 import intel.et
 from suricata import *
-import json, logging, os, pprint, queue, signal, smtplib, sys, threading, time
+import datetime, json, logging, os, pprint, queue, signal, smtplib, sys, \
+       threading, time
 
 
 class EventParser(threading.Thread):
@@ -23,18 +24,29 @@ class EventParser(threading.Thread):
         while not self.stop:
             line = evefile.readline()
             if not line:
-                # Reopen if EOF (due to log file rotation)
-                # FIXME Verify this works at 6:25
-                if not evefile.closed:
-                    time.sleep(0.1)
-                else:
+                # Test for log file rotation by comparing the mod.times
+                # of the file path and the open file descriptor
+                # FIXME Verify this works for next log rotation
+                d1 = datetime.datetime.fromtimestamp(
+                         os.stat('/var/log/suricata/eve.json').st_mtime)
+                d2 = datetime.datetime.fromtimestamp(
+                         os.fstat(evefile.fileno()).st_mtime)
+
+                if d1 > d2:
+                    logging.info('detected log file rotation, reopening file')
                     evefile = open('/var/log/suricata/eve.json', 'r')
                     evefile.seek(0, os.SEEK_END)
+                else:
+                    time.sleep(0.1)
+
                 continue
 
             try:
                 record = json.loads(line)
             except:
+                # TODO This seems to occur for broken lines,
+                #      unclear why since it's not a buffering issue
+
                 logging.exception('line = %r', line)
                 # TODO Consider sending an email with the exception
 
@@ -91,21 +103,23 @@ class Notifier(threading.Thread):
                         smtp.sendmail(
                             self.config['mailtofrom'],
                             self.config['mailtofrom'],
-                            '\r\n' + '\n\n'.join(map(lambda a: pprint.pformat(a),
+                            '\r\n' + '\n\n'.join(map(lambda a:
+                                                         pprint.pformat(a),
                                                      alerts)))
 
                         logging.info('sent a mail with %u alerts', len(alerts))
 
                         # Abort if more than 100 alerts (not mails) in 24 hours
                         total += [time.time() * len(alerts)]
-                        total = list(filter(lambda t: time.time()-t < 24*60*60, total))
+                        total = list(filter(lambda t: time.time()-t < 24*60*60,
+                                            total))
                         if len(total) > 100:
                             self.stop = True
 
                         break
 
-                    # SMTP command timeout
-                    except smtplib.SMTPSenderRefused:
+                    # SMTP command timeout, broken pipe, etc
+                    except smtplib.SMTPException:
                         once = False
                         smtp = smtplib.SMTP(self.config['smtpserver'])
 
@@ -184,7 +198,8 @@ if __name__ == '__main__':
 
 
     logging.basicConfig(level=logging.INFO,
-                        format='%(asctime)s:%(levelname)s:%(name)s:%(threadName)s:%(message)s')
+                        format=('%(asctime)s:%(levelname)s:%(name)s:' + \
+                                '%(threadName)s:%(message)s'))
 
     with open('config.json') as f:
         config = json.load(f)
