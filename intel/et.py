@@ -25,9 +25,13 @@ def _download(url, thread):
 
 def _url(config):
     if 'etpro_oink' in config:
-        return 'https://rules.emergingthreatspro.com/%s/suricata-%s/etpro.rules.tar.gz' % (config['etpro_oink'], config['version'])
+        return 'https://rules.emergingthreatspro.com/' + \
+                   '%s/suricata-%s/etpro.rules.tar.gz' % \
+                       (config['etpro_oink'], config['version'])
     else:
-        return 'https://rules.emergingthreats.net/open/suricata-%s/emerging.rules.tar.gz' % config['version']
+        return 'https://rules.emergingthreats.net/' + \
+                   'open/suricata-%s/emerging.rules.tar.gz' % \
+                       config['version']
 
 
 def install(config, thread):
@@ -59,17 +63,37 @@ def install(config, thread):
             
         logging.info('%u ET rules files found', len(rules))
 
-        with open('/etc/suricata/rules/osint-suricata-et.rules', 'w', encoding='utf-8') as masterfile:
+        with open('/etc/suricata/rules/osint-suricata-et.rules',
+                  'w', encoding='utf-8') as masterfile:
+
             alerts = 0
+            blacklisted = 0
+
             for path in rules:
                 with open(path, 'r', encoding='utf-8') as rulefile:
+                    blacklist = config.get('et-blacklist', {}) \
+                                      .get(os.path.basename(path), [])
+
                     for line in rulefile:
+                        reject = False
+
                         if line.startswith('alert '):
                             alerts += 1
-                        masterfile.write(line)
+
+                            for entry in blacklist:
+                                # Substring matching
+                                if entry in line:
+                                    blacklisted += 1
+                                    reject = True
+                                    break
+
+                        if not reject:
+                            masterfile.write(line)
+
                     masterfile.write('\n\n\n')
 
-            logging.info('with %u rules in total', alerts)
+            logging.info('with %u rules in total and %u blacklisted',
+                         alerts, blacklisted)
 
     #os.unlink(tarball)
 
