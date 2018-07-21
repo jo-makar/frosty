@@ -1,5 +1,5 @@
 # osint-suricata
-Open Source threat Intel with Suricata (an Intrusion Detection System)
+Automated alerting on open source threat intel with the Suricata IDS
 
 The intention of this project is to automate the use of
 [Suricata](https://suricata-ids.org/) with freely available threat intel to
