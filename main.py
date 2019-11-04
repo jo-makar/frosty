@@ -31,7 +31,7 @@ class Downloader(threading.Thread):
             lastupdate[module.__name__] = local if local else datetime.datetime.fromtimestamp(0)
 
             if local is None or local < remote:
-                logger.info('updating %s ruleset', module.__name__)
+                logging.info('updating %s ruleset', module.__name__)
                 rv = module.install(self.config, self)
                 if rv is None or self.stop:
                     return
@@ -54,7 +54,7 @@ class Downloader(threading.Thread):
                     assert remote is not None
 
                     if lastupdate[module.__name__] < remote:
-                        logger.info('updating %s ruleset', module.__name__)
+                        logging.info('updating %s ruleset', module.__name__)
 
                         rv = module.install(self.config, self)
                         if rv is None or self.stop:
@@ -108,6 +108,7 @@ class Notifier(threading.Thread):
 
                     # SMTP command timeout, broken pipe, etc
                     except smtplib.SMTPException:
+                        logging.exception('failed to send mail')
                         once = False
                         smtp = smtplib.SMTP(self.config['smtpserver'])
 
@@ -140,8 +141,14 @@ class Parser(threading.Thread):
         errors_total = []
 
         while not self.stop:
+            pos = evefile.tell()
             line = evefile.readline()
             if not line:
+                if not line.endswith('\n'):
+                    evefile.seek(pos)
+                    time.sleep(0.1)
+                    continue
+
                 # Test for log file rotation by comparing the modification times of the file path and the open file
                 d1 = datetime.datetime.fromtimestamp(os.stat('/var/log/suricata/eve.json').st_mtime)
                 d2 = datetime.datetime.fromtimestamp(os.stat(evefile.fileno()).st_mtime)
@@ -172,7 +179,6 @@ class Parser(threading.Thread):
             stats[record['event_type']] = stats.get(record['event_type'], 0) + 1
 
             if record['event_type'] == 'alert':
-                logging.debug('\n' + pprint.pformat(record))
                 notifier.alerts.put(record)
 
             if time.time() - since >= 600:
