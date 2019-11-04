@@ -28,6 +28,8 @@ class Downloader(threading.Thread):
             remote = module.latest(self.config)
             assert remote is not None
 
+            lastupdate[module.__name__] = local if local else datetime.datetime.fromtimestamp(0)
+
             if local is None or local < remote:
                 logger.info('updating %s ruleset', module.__name__)
                 rv = module.install(self.config, self)
@@ -86,7 +88,7 @@ class Notifier(threading.Thread):
             if not self.alerts.empty():
                 alert = self.alerts.get()
 
-                body = 'Subject: {}\r\n\r\n'.format(alert['alert']['signature']) + pprint.pformat(alert)
+                body = 'Subject: {}\r\nFrom: osint-suricata@docker\r\n\r\n'.format(alert['alert']['signature']) + pprint.pformat(alert)
 
                 alerts_total += [time.time()]
                 alerts_total = list(filter(lambda t: time.time() - t < 24*60*60, alerts_total))
@@ -132,8 +134,8 @@ class Parser(threading.Thread):
         evefile = open('/var/log/suricata/eve.json', 'r', encoding='utf-8')
         evefile.seek(0, os.SEEK_END)
 
-        alerts_since = time.time()
-        alerts_count = 0
+        stats = {}
+        since = time.time()
 
         errors_total = []
 
@@ -151,10 +153,14 @@ class Parser(threading.Thread):
                     time.sleep(0.25)
                 continue
 
+            stats['lines'] = stats.get('lines', 0) + 1
+
             try:
                 record = json.loads(line)
             except:
                 logging.exception('line = %r', line)
+                stats['errors'] = stats.get('errors', 0) + 1
+
                 errors_total += [time.time()]
                 errors_total = list(filter(lambda t: time.time() - t < 24*60*60, errors_total))
                 if len(errors_total) > 10:
@@ -162,20 +168,22 @@ class Parser(threading.Thread):
                     break
                 continue
 
-            if record.get('event_type') == 'alert':
+            assert 'event_type' in record
+            stats[record['event_type']] = stats.get(record['event_type'], 0) + 1
+
+            if record['event_type'] == 'alert':
                 logging.debug('\n' + pprint.pformat(record))
                 notifier.alerts.put(record)
-                alerts_count += 1
 
-            if time.time() - alerts_since >= 60:
-                if alerts_count > 0:
-                    logging.info('%u alert%s generated', alerts_count, '' if alerts_count == 1 else 's')
-                alerts_since = time.time()
-                alerts_count = 0
+            if time.time() - since >= 600:
+                logging.info('stats = %r', stats)
+                stats = {}
+                since = time.time()
 
             # TODO Periodically report metrics / stats
             #      See dump-counters and iface-stat suricata socket commands
             #      Alternatively can parse suricata stats records
+            #      Specifically monitor suricata dropped packet counts
 
         evefile.close()
 
@@ -215,16 +223,18 @@ if __name__ == '__main__':
     signal.signal(signal.SIGTERM, stop)
 
     while True:
-        if functools.reduce(lambda a,b: a and b, [not t.is_alive() for t in threads]):
+        if not functools.reduce(lambda a,b: a and b, [t.is_alive() for t in threads]):
+            stopped = functools.reduce(lambda a,b: a and b, [t.stop for t in threads])
+
             for t in threads:
                 if t.is_alive():
                     t.stop = True
                     t.join()
 
-            stopped = functools.reduce(lambda a,b: a and b, [t.stop for t in threads])
             if not stopped:
+                body = 'Subject: ungraceful shutdown\r\nFrom: osint-suricata@docker\r\n\r\nungraceful shutdown, check docker container logs'
                 smtp = smtplib.SMTP(config['smtpserver'])
-                smtp.sendmail(config['mailtofrom'], config['mailtofrom'], 'osint-suricata ungraceful shutdown, check docker container logs')
+                smtp.sendmail(config['mailtofrom'], config['mailtofrom'], body)
                 smtp.quit()
 
             break
