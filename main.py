@@ -1,19 +1,135 @@
 import intel.et
-from suricata import *
-import datetime, json, logging, os, pprint, queue, signal, smtplib, sys, \
-       threading, time
+from suricata import Suricata
+import datetime, functools, json, logging, os, pprint, queue, signal, smtplib, sys, threading, time
 
+class Downloader(threading.Thread):
+    def __init__(self, config):
+        threading.Thread.__init__(self)
+        self.daemon = False
+        self.name = 'Downloader'
 
-class EventParser(threading.Thread):
-    def __init__(self, config, notifier):
-        threading.Thread.__init__(self, daemon=False)
-
-        self.stop = False
         self.config = config
 
+        self.stop = False
 
     def run(self):
-        evefile = open('/var/log/suricata/eve.json', 'r')
+        modules = [intel.et]
+
+        lastupdate = {}
+        installed = False
+        for module in modules:
+            local = None
+            try:
+                m = module.__name__.split('.', maxsplit=1)[1]
+                local = datetime.datetime.fromtimestamp(os.stat('/etc/suricata/rules/osint-suricata-{}.rules'.format(m)).st_mtime)
+            except:
+                pass
+                
+            remote = module.latest(self.config)
+            assert remote is not None
+
+            if local is None or local < remote:
+                logger.info('updating %s ruleset', module.__name__)
+                rv = module.install(self.config, self)
+                if rv is None or self.stop:
+                    return
+
+                lastupdate[module.__name__] = rv
+                installed = True
+
+        if installed:
+            with Suricata() as suri:
+                assert suri.reloadrules()
+
+        lastcheck = time.time()
+        while not self.stop:
+            time.sleep(1)
+
+            if time.time() - lastcheck >= 3600:
+                installed = False
+                for module in modules:
+                    remote = module.latest(self.config)
+                    assert remote is not None
+
+                    if lastupdate[module.__name__] < remote:
+                        logger.info('updating %s ruleset', module.__name__)
+
+                        rv = module.install(self.config, self)
+                        if rv is None or self.stop:
+                            return
+
+                        lastupdate[module.__name__] = rv
+                        installed = True
+
+                if installed:
+                    with Suricata() as suri:
+                        assert suri.reloadrules()
+
+class Notifier(threading.Thread):
+    def __init__(self, config):
+        threading.Thread.__init__(self)
+        self.daemon = False
+        self.name = 'Notifier'
+
+        self.config = config
+
+        self.stop = False
+
+        self.alerts = queue.Queue()
+
+    def run(self):
+        smtp = smtplib.SMTP(self.config['smtpserver'])
+
+        alerts_total = []
+
+        while not self.stop:
+            if not self.alerts.empty():
+                alert = self.alerts.get()
+
+                body = 'Subject: {}\r\n\r\n'.format(alert['alert']['signature']) + pprint.pformat(alert)
+
+                alerts_total += [time.time()]
+                alerts_total = list(filter(lambda t: time.time() - t < 24*60*60, alerts_total))
+                if len(alerts_total) > 100:
+                    logging.error('too many alerts within 24 hours, aborting')
+                    body += '\ntoo many alerts within 24 hours, aborting\n'
+                    self.stop = True
+
+                once = True
+                success = False
+                while once:
+                    try:
+                        smtp.sendmail(self.config['mailtofrom'], self.config['mailtofrom'], body)
+                        logging.info('alert mail for %s sent', alert['alert']['signature'])
+                        success = True
+                        break
+
+                    # SMTP command timeout, broken pipe, etc
+                    except smtplib.SMTPException:
+                        once = False
+                        smtp = smtplib.SMTP(self.config['smtpserver'])
+
+                assert success
+                self.alerts.task_done()
+
+            else:
+                time.sleep(1)
+
+        smtp.quit()
+
+class Parser(threading.Thread):
+    def __init__(self, config, notifier):
+        threading.Thread.__init__(self)
+        self.daemon = False
+        self.name = 'Parser'
+
+        self.config = config
+        self.notifier = notifier
+
+        self.stop = False
+
+    def run(self):
+        evefile = open('/var/log/suricata/eve.json', 'r', encoding='utf-8')
         evefile.seek(0, os.SEEK_END)
 
         alerts_since = time.time()
@@ -24,38 +140,27 @@ class EventParser(threading.Thread):
         while not self.stop:
             line = evefile.readline()
             if not line:
-                # Test for log file rotation by comparing the mod.times
-                # of the file path and the open file descriptor
-                # FIXME Verify this works for next log rotation
-                d1 = datetime.datetime.fromtimestamp(
-                         os.stat('/var/log/suricata/eve.json').st_mtime)
-                d2 = datetime.datetime.fromtimestamp(
-                         os.fstat(evefile.fileno()).st_mtime)
-
+                # Test for log file rotation by comparing the modification times of the file path and the open file
+                d1 = datetime.datetime.fromtimestamp(os.stat('/var/log/suricata/eve.json').st_mtime)
+                d2 = datetime.datetime.fromtimestamp(os.stat(evefile.fileno()).st_mtime)
                 if d1 > d2:
                     logging.info('detected log file rotation, reopening file')
-                    evefile = open('/var/log/suricata/eve.json', 'r')
+                    evefile = open('/var/log/suricata/eve.json', 'r', encoding='utf-8')
                     evefile.seek(0, os.SEEK_END)
                 else:
-                    time.sleep(0.1)
-
+                    time.sleep(0.25)
                 continue
 
             try:
                 record = json.loads(line)
             except:
-                # TODO This seems to occur for broken lines,
-                #      unclear why since it's not a buffering issue
-
                 logging.exception('line = %r', line)
-                # TODO Consider sending an email with the exception
-
-                # Abort if more than 10 errors in 24 hours
                 errors_total += [time.time()]
-                errors_total = list(filter(lambda t: time.time()-t < 24*60*60,
-                                           errors_total))
+                errors_total = list(filter(lambda t: time.time() - t < 24*60*60, errors_total))
                 if len(errors_total) > 10:
-                    self.stop = True
+                    logging.error('too many errors within 24 hours, aborting')
+                    break
+                continue
 
             if record.get('event_type') == 'alert':
                 logging.debug('\n' + pprint.pformat(record))
@@ -64,181 +169,64 @@ class EventParser(threading.Thread):
 
             if time.time() - alerts_since >= 60:
                 if alerts_count > 0:
-                    logging.info('%u alert%s generated',
-                                 alerts_count, '' if alerts_count == 1 else 's')
+                    logging.info('%u alert%s generated', alerts_count, '' if alerts_count == 1 else 's')
                 alerts_since = time.time()
                 alerts_count = 0
 
-            # TODO Consider reporting metrics or accumulated stats (daily?).
-            #      Perhaps to start a report on flows (top most contacted IPs).
+            # TODO Periodically report metrics / stats
+            #      See dump-counters and iface-stat suricata socket commands
+            #      Alternatively can parse suricata stats records
 
         evefile.close()
 
-
-class Notifier(threading.Thread):
-    def __init__(self, config):
-        threading.Thread.__init__(self, daemon=False)
-
-        self.stop = False
-        self.config = config
-
-        self.alerts = queue.Queue()
-        self.others = queue.Queue()
-
-
-    def run(self):
-        smtp = smtplib.SMTP(self.config['smtpserver'])
-
-        total = []
-
-        while not self.stop:
-            if not self.alerts.empty():
-                alerts = [self.alerts.get()]
-                while not self.alerts.empty() and len(alerts) < 10:
-                    alerts += [self.alerts.get()]
-
-                once = True
-                while once:
-                    try:
-                        smtp.sendmail(
-                            self.config['mailtofrom'],
-                            self.config['mailtofrom'],
-                            '\r\n' + '\n\n'.join(map(lambda a:
-                                                         pprint.pformat(a),
-                                                     alerts)))
-
-                        logging.info('sent a mail with %u alerts', len(alerts))
-
-                        # Abort if more than 100 alerts (not mails) in 24 hours
-                        total += [time.time() * len(alerts)]
-                        total = list(filter(lambda t: time.time()-t < 24*60*60,
-                                            total))
-                        if len(total) > 100:
-                            self.stop = True
-
-                        break
-
-                    # SMTP command timeout, broken pipe, etc
-                    except smtplib.SMTPException:
-                        once = False
-                        smtp = smtplib.SMTP(self.config['smtpserver'])
-
-                for i in range(len(alerts)):
-                    self.alerts.task_done()
-
-            elif not self.others.empty():
-                once = True
-                while once:
-                    try:
-                        smtp.sendmail(self.config['mailtofrom'],
-                                      self.config['mailtofrom'],
-                                      self.others.get())
-                        break
-                    except smtplib.SMTPSenderRefused:
-                        once = False
-                        smtp = smtplib.SMTP(self.config['smtpserver'])
-
-                self.others.task_done()
-
-            else:
-                time.sleep(1)
-
-        smtp.quit()
-
-
-class Downloader(threading.Thread):
-    def __init__(self, config):
-        threading.Thread.__init__(self, daemon=False)
-
-        self.stop = False
-        self.config = config
-
-
-    def run(self):
-        lastupdate = {}
-
-        last = intel.et.install(config, self)
-        if last:
-            lastupdate['et'] = last
-            if not suricata_reloadrules():
-                self.stop = True
-        else:
-            self.stop = True
-
-        since = time.time()
-
-        while not self.stop:
-            time.sleep(1)
-
-            if time.time() - since >= 3600:
-                last = intel.et.latest(config)
-                logging.info('et last modified: %s', last)
-
-                if last > lastupdate['et']:
-                    last2 = intel.et.install(config, self)
-                    if last2:
-                        lastupdate['et'] = last
-                        if not suricata_reloadrules():
-                            # TODO Consider sending an email about the failure
-                            pass
-                    else:
-                        # TODO Consider sending an email about the failure
-                        pass
-
-                since = time.time()
-
-
 if __name__ == '__main__':
-    def stop(signum, frame):
-        logging.info('received signal %d', signum)
-
-        for t in threads:
-            t.stop = True
-            t.join()
-
-
-    logging.basicConfig(level=logging.INFO,
-                        format=('%(asctime)s:%(levelname)s:%(name)s:' + \
-                                '%(threadName)s:%(message)s'))
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s:%(threadName)s:%(message)s')
 
     with open('config.json') as f:
         config = json.load(f)
 
-    ver = suricata_version()
-    if not ver:
-        logging.error('unable to communicate with suricata')
-        sys.exit(1)
-    logging.info('suricata version = %s', ver)
-    config.update({'version': ver})
+    with Suricata() as suri:
+        v = suri.version()
+        logging.info('suricata version = %s', v)
+        config.update({'version': v})
 
-    # TODO Would be good to verify "conf-get outputs.eve-log.enabled"
-    #      but this does not seem to be supported by the interface currently
+        enabled = False
+        for i in range(10):
+            if suri.confget('outputs.{}.eve-log.enabled'.format(i)) == 'yes':
+                enabled = True
+                break
+        assert enabled
 
-    notifier = Notifier(config)
-    parser = EventParser(config, notifier)
     downloader = Downloader(config)
+    notifier = Notifier(config)
+    parser = Parser(config, notifier)
 
-    threads = [notifier, parser, downloader]
+    threads = [downloader, notifier, parser]
     for t in threads:
         t.start()
+
+    def stop(signum, frame):
+        logging.info('received signal %d', signum)
+        for t in threads:
+            t.stop = True
+            t.join()
 
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
 
     while True:
-        stopall = False
-        for t in threads:
-            if not t.is_alive():
-                stopall = True
-                break
-
-        if stopall:
+        if functools.reduce(lambda a,b: a and b, [not t.is_alive() for t in threads]):
             for t in threads:
                 if t.is_alive():
                     t.stop = True
                     t.join()
+
+            stopped = functools.reduce(lambda a,b: a and b, [t.stop for t in threads])
+            if not stopped:
+                smtp = smtplib.SMTP(config['smtpserver'])
+                smtp.sendmail(config['mailtofrom'], config['mailtofrom'], 'osint-suricata ungraceful shutdown, check docker container logs')
+                smtp.quit()
+
             break
 
         time.sleep(1)
-
-# vim: set textwidth=80

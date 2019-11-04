@@ -1,106 +1,78 @@
-# Interface to the Suricata command socket (ie /var/run/suricata-command.socket).
-# Ensure that the unix-command option is enabled in the Suricata configuration.
-# Ref: https://redmine.openinfosecfoundation.org/projects/suricata/wiki/Unix_Socket#Protocol
+# Ref: https://suricata.readthedocs.io/en/suricata-4.1.2/unix-socket.html
+#      https://github.com/OISF/suricata/blob/master/python/suricata/sc/specs.py
 
-import json, logging, re, socket
+import json, logging, socket, time
 
-_INBUFLEN = 4096
+class Suricata:
+    def __init__(self):
+        pass
 
-def _connect():
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.connect('/var/run/suricata-command.socket')
+    def __enter__(self):
+        self.__sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.__sock.connect('/var/run/suricata-command.socket')
+        self.__sock.settimeout(600)
 
-    outbuf = b'{"version":"0.1"}'
-    sock.sendall(outbuf)
-    logging.debug('>>> %r', outbuf)
-    inbuf = sock.recv(_INBUFLEN)
-    logging.debug('<<< %r', inbuf)
+        outbuf = b'{"version":"0.1"}'
+        self.__sock.sendall(outbuf)
+        logging.debug('>>> %r', outbuf)
+        inbuf = self.__sock.recv(1024)
+        logging.debug('<<< %r', inbuf)
 
-    try:
         resp = json.loads(inbuf.decode('utf-8'))
-    except:
-        logging.exception('failed to parse response')
-        sock.close()
-        return None
+        assert resp.get('return') == 'OK'
 
-    if resp.get('return') != 'OK':
-        logging.error('unexpected response')
-        sock.close()
-        return None
+        return self
 
-    return sock
+    def __exit__(self, exctype, excval, traceback):
+        if exctype is None:
+            self.__sock.close()
 
+    def __command(self, cmd, args={}, full=False):
+        outjson = {'command': cmd}
+        if args:
+            outjson['arguments'] = args
 
-def _command(sock, cmd, args={}, full=False, wait=True):
-    outjson = {'command': cmd}
-    if args:
-        outjson['arguments'] = args
+        outbuf = bytearray(json.dumps(outjson), 'utf-8')
+        self.__sock.sendall(outbuf)
+        logging.debug('>>> %r', outbuf)
 
-    outbuf = bytearray(json.dumps(outjson), 'utf-8')
-    sock.sendall(outbuf)
-    logging.debug('>>> %r', outbuf)
+        inbuf = self.__sock.recv(4096)
+        logging.debug('<<< %r', inbuf)
 
-    if not wait:
-        return True
-
-    inbuf = sock.recv(_INBUFLEN)
-    logging.debug('<<< %r', inbuf)
-
-    try:
         resp = json.loads(inbuf.decode('utf-8'))
-    except:
-        logging.exception('failed to parse response')
-        sock.close()
-        return None
 
-    if full:
-        return resp
-    else:
-        if resp.get('return') != 'OK':
-            logging.error('unexpected response')
-            sock.close()
+        if full:
+            return resp
+        else:
+            assert resp.get('return') == 'OK'
+            assert 'message' in resp
+            return resp['message']
+
+    def version(self):
+        return self.__command('version').split()[0]
+
+    def confget(self, name):
+        resp = self.__command('conf-get', args={'variable':name}, full=True)
+
+        if resp.get('return') == 'NOK': # not ok
             return None
 
-        if 'message' not in resp:
-            logging.error('unexpected response')
-            sock.close()
-            return None
-
+        assert resp.get('return') == 'OK'
+        assert 'message' in resp
         return resp['message']
 
+    def reloadrules(self):
+        try:
+            s = time.time()
+            self.__command('ruleset-reload-rules')
+        except socket.timeout:
+            logging.error('socket timeout')
+            return False
 
-def suricata_version():
-    sock = _connect()
-    if not sock:
-        return None
+        logging.info('rules reloaded in %.1f secs', time.time() - s)
+        stats = self.__command('ruleset-stats')[0]
+        logging.info('%u rules loaded, %u rules failed', stats['rules_loaded'], stats['rules_failed'])
+        if stats['rules_failed'] > 0:
+            logging.info('failed rules: %r', self.__command('ruleset-failed-rules')[0])
 
-    resp = _command(sock, 'version')
-    if not resp:
-        return None
-
-    sock.close()
-
-    mat = re.match('^\d+\.\d+\.\d+', resp)
-    if not mat:
-        logging.error('unexpected version format: %s', resp)
-        return None
-
-    return mat.group(0)
-
-
-def suricata_reloadrules():
-    sock = _connect()
-    if not sock:
-        return False
-
-    # TODO Better to check if rules are not currently loading first.
-    #      Can be done by parsing the log and looking for specific lines.
-
-    # This will block until the operation is completed and return:
-    #     {"message": "done", "return": "OK"}
-    rv = _command(sock, 'reload-rules', wait=False)
-
-    sock.close()
-    return rv
-
-# vim: set textwidth=80
+        return True

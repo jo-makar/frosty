@@ -1,53 +1,60 @@
 import requests
 import datetime, logging, os, os.path, subprocess, tempfile
 
+def _url(config):
+    if 'etpro_oink' in config:
+        return 'https://rules.emergingthreatspro.com/{}/suricata-{}/etpro.rules.tar.gz'.format(config['etpro_oink'], config['version'])
+    else:
+        return 'https://rules.emergingthreats.net/open/suricata-{}/emerging.rules.tar.gz'.format(config['version'])
 
 def _download(url, thread):
-    '''Download a file in chunks to allow interruption'''
-
     path = os.path.join('/tmp', url.split('/')[-1])
 
     try:
-        resp = requests.get(url, stream=True)
+        resp = requests.get(url, stream=True, timeout=100)
         with open(path, 'wb') as f:
             for chunk in resp.iter_content(chunk_size=None):
                 if thread.stop:
-                    return None
+                    return None, None
 
                 f.write(chunk)
                 f.flush()
     except:
         logging.exception('url = %s', url)
+        return None, None
+
+    return path, _lastmod(resp.headers['Last-Modified'])
+
+def _lastmod(header):
+    try:
+        rv = datetime.datetime.strptime(header, '%a, %d %b %Y %H:%M:%S %Z')
+    except:
+        logging.exception('unable to determine when last modified')
         return None
 
-    return path
+    if header.split()[-1] not in ['GMT', 'UTC']:
+        logging.error('last-modified not in utc')
+        return None
 
+    return rv
 
-def _url(config):
-    if 'etpro_oink' in config:
-        return 'https://rules.emergingthreatspro.com/' + \
-                   '%s/suricata-%s/etpro.rules.tar.gz' % \
-                       (config['etpro_oink'], config['version'])
-    else:
-        return 'https://rules.emergingthreats.net/' + \
-                   'open/suricata-%s/emerging.rules.tar.gz' % \
-                       config['version']
+def latest(config):
+    resp = requests.head(_url(config), timeout=100)
+    if not resp.ok:
+        return None
 
+    return _lastmod(resp.headers['Last-Modified'])
 
 def install(config, thread):
     url = _url(config)
     logging.info('downloading %s', url)
-    tarball = _download(url, thread)
-    if not tarball:
+    tarball, lastmod = _download(url, thread)
+    if tarball is None or lastmod is None:
         return None
-    rv = datetime.datetime.utcnow()
     logging.info('%s downloaded successfully', tarball)
 
-    # The tarball will be composed of a rules dir with *.rules files
-    # (in addition to other text and yaml files)
-
     with tempfile.TemporaryDirectory() as tmpdir:
-        if subprocess.call(['tar', 'xzf', tarball, '-C', tmpdir]) != 0:
+        if subprocess.call(['tar', 'xf', tarball, '-C', tmpdir]) != 0:
             logging.error('tar returned a non-zero exit code')
             return None
 
@@ -61,18 +68,16 @@ def install(config, thread):
             if os.path.isfile(path) and path.endswith('.rules'):
                 rules += [path]
             
-        logging.info('%u ET rules files found', len(rules))
+        logging.info('%u et rules files found', len(rules))
 
-        with open('/etc/suricata/rules/osint-suricata-et.rules',
-                  'w', encoding='utf-8') as masterfile:
+        with open('/etc/suricata/rules/osint-suricata-et.rules', 'w', encoding='utf-8') as masterfile:
 
             alerts = 0
             blacklisted = 0
 
             for path in rules:
                 with open(path, 'r', encoding='utf-8') as rulefile:
-                    blacklist = config.get('et-blacklist', {}) \
-                                      .get(os.path.basename(path), [])
+                    blacklist = config.get('et-blacklist', {}).get(os.path.basename(path), [])
 
                     for line in rulefile:
                         reject = False
@@ -81,8 +86,7 @@ def install(config, thread):
                             alerts += 1
 
                             for entry in blacklist:
-                                # Substring matching
-                                if entry in line:
+                                if entry in line: # substring matching
                                     blacklisted += 1
                                     reject = True
                                     break
@@ -92,31 +96,8 @@ def install(config, thread):
 
                     masterfile.write('\n\n\n')
 
-            logging.info('with %u rules in total and %u blacklisted',
-                         alerts, blacklisted)
+            logging.info('with %u rules in total and %u blacklisted', alerts, blacklisted)
 
-    #os.unlink(tarball)
+    os.unlink(tarball)
 
-    return rv
-
-
-def latest(config):
-    resp = requests.head(_url(config))
-    
-    if not resp.ok:
-        return None
-    try:
-        # Eg: 'Fri, 30 Mar 2018 21:20:31 GMT'
-        rv = datetime.datetime.strptime(resp.headers['Last-Modified'],
-                                        '%a, %d %b %Y %H:%M:%S %Z')
-    except:
-        logging.exception('unable to determine when last modified')
-        return None
-
-    if resp.headers['Last-Modified'].split()[-1] not in ['GMT', 'UTC']:
-        logging.error('last-modified not in utc')
-        return None
-
-    return rv
-
-# vim: set textwidth=80
+    return lastmod
