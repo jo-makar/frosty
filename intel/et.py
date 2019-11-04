@@ -1,4 +1,4 @@
-import requests
+import pytz, requests, tzlocal
 import datetime, logging, os, os.path, subprocess, tempfile
 
 def _url(config):
@@ -36,7 +36,7 @@ def _lastmod(header):
         logging.error('last-modified not in utc')
         return None
 
-    return rv
+    return pytz.utc.localize(rv).astimezone(tzlocal.get_localzone())
 
 def latest(config):
     resp = requests.head(_url(config), timeout=100)

@@ -1,5 +1,6 @@
 import intel.et
 from suricata import Suricata
+import tzlocal
 import datetime, functools, json, logging, os, pprint, queue, signal, smtplib, sys, threading, time
 
 class Downloader(threading.Thread):
@@ -21,7 +22,7 @@ class Downloader(threading.Thread):
             local = None
             try:
                 m = module.__name__.split('.', maxsplit=1)[1]
-                local = datetime.datetime.fromtimestamp(os.stat('/etc/suricata/rules/osint-suricata-{}.rules'.format(m)).st_mtime)
+                local = datetime.datetime.fromtimestamp(timestamp=os.stat('/etc/suricata/rules/osint-suricata-{}.rules'.format(m)).st_mtime, tz=tzlocal.get_localzone())
             except:
                 pass
                 
@@ -144,11 +145,6 @@ class Parser(threading.Thread):
             pos = evefile.tell()
             line = evefile.readline()
             if not line:
-                if not line.endswith('\n'):
-                    evefile.seek(pos)
-                    time.sleep(0.1)
-                    continue
-
                 # Test for log file rotation by comparing the modification times of the file path and the open file
                 d1 = datetime.datetime.fromtimestamp(os.stat('/var/log/suricata/eve.json').st_mtime)
                 d2 = datetime.datetime.fromtimestamp(os.stat(evefile.fileno()).st_mtime)
@@ -158,6 +154,11 @@ class Parser(threading.Thread):
                     evefile.seek(0, os.SEEK_END)
                 else:
                     time.sleep(0.25)
+                continue
+
+            if not line.endswith('\n'):
+                evefile.seek(pos)
+                time.sleep(0.1)
                 continue
 
             stats['lines'] = stats.get('lines', 0) + 1
