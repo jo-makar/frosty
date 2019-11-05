@@ -81,45 +81,28 @@ class Notifier(threading.Thread):
         self.alerts = queue.Queue()
 
     def run(self):
-        smtp = smtplib.SMTP(self.config['smtpserver'])
-
         alerts_total = []
-
         while not self.stop:
-            if not self.alerts.empty():
-                alert = self.alerts.get()
-
-                body = 'Subject: {}\r\nFrom: osint-suricata@docker\r\n\r\n'.format(alert['alert']['signature']) + pprint.pformat(alert)
-
-                alerts_total += [time.time()]
-                alerts_total = list(filter(lambda t: time.time() - t < 24*60*60, alerts_total))
-                if len(alerts_total) > 100:
-                    logging.error('too many alerts within 24 hours, aborting')
-                    body += '\ntoo many alerts within 24 hours, aborting\n'
-                    self.stop = True
-
-                once = True
-                success = False
-                while once:
-                    try:
-                        smtp.sendmail(self.config['mailtofrom'], self.config['mailtofrom'], body)
-                        logging.info('alert mail for %s sent', alert['alert']['signature'])
-                        success = True
-                        break
-
-                    # SMTP command timeout, broken pipe, etc
-                    except smtplib.SMTPException:
-                        logging.exception('failed to send mail')
-                        once = False
-                        smtp = smtplib.SMTP(self.config['smtpserver'])
-
-                assert success
-                self.alerts.task_done()
-
-            else:
+            if self.alerts.empty():
                 time.sleep(1)
+                continue
 
-        smtp.quit()
+            alert = self.alerts.get()
+            body = 'Subject: {}\r\nFrom: osint-suricata@docker\r\n\r\n'.format(alert['alert']['signature']) + pprint.pformat(alert)
+
+            alerts_total += [time.time()]
+            alerts_total = list(filter(lambda t: time.time() - t < 24*60*60, alerts_total))
+            if len(alerts_total) > 100:
+                logging.error('too many alerts within 24 hours, aborting')
+                body += '\ntoo many alerts within 24 hours, aborting\n'
+                self.stop = True
+
+            smtp = smtplib.SMTP(self.config['smtpserver'])
+            smtp.sendmail(self.config['mailtofrom'], self.config['mailtofrom'], body)
+            smtp.quit()
+
+            logging.info('alert mail for %s sent', alert['alert']['signature'])
+            self.alerts.task_done()
 
 class Parser(threading.Thread):
     def __init__(self, config, notifier):
@@ -137,6 +120,9 @@ class Parser(threading.Thread):
         evefile.seek(0, os.SEEK_END)
         time.sleep(1)
         evefile_notifier = inotify.adapters.Inotify(paths=[evefile.name])
+
+        # TODO Unfortunately inotify as used below has the side effect of detecting log rotation when any external process opens/closes the file
+        #      Eg a cat/less/view/jq/anything, what can be done about this?  Requires some research/investigation
 
         stats = {}
         since = time.time()
@@ -173,7 +159,7 @@ class Parser(threading.Thread):
                                 errors_total = list(filter(lambda t: time.time() - t < 24*60*60, errors_total))
                                 if len(errors_total) > 10:
                                     logging.error('too many errors within 24 hours, aborting')
-                                    break
+                                    return
                                 continue
 
                             assert 'event_type' in record
