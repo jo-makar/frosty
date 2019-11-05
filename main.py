@@ -1,6 +1,6 @@
 import intel.et
 from suricata import Suricata
-import tzlocal
+import inotify.adapters, tzlocal
 import datetime, functools, json, logging, os, pprint, queue, signal, smtplib, sys, threading, time
 
 class Downloader(threading.Thread):
@@ -135,6 +135,8 @@ class Parser(threading.Thread):
     def run(self):
         evefile = open('/var/log/suricata/eve.json', 'r', encoding='utf-8')
         evefile.seek(0, os.SEEK_END)
+        time.sleep(1)
+        evefile_notifier = inotify.adapters.Inotify(paths=[evefile.name])
 
         stats = {}
         since = time.time()
@@ -142,55 +144,69 @@ class Parser(threading.Thread):
         errors_total = []
 
         while not self.stop:
-            pos = evefile.tell()
-            line = evefile.readline()
-            if not line:
-                # Test for log file rotation by comparing the modification times of the file path and the open file
-                d1 = datetime.datetime.fromtimestamp(os.stat('/var/log/suricata/eve.json').st_mtime)
-                d2 = datetime.datetime.fromtimestamp(os.stat(evefile.fileno()).st_mtime)
-                if d1 > d2:
-                    logging.info('detected log file rotation, reopening file')
-                    evefile = open('/var/log/suricata/eve.json', 'r', encoding='utf-8')
-                    evefile.seek(0, os.SEEK_END)
-                else:
-                    time.sleep(0.25)
-                continue
+            reopen = False
+            for event in evefile_notifier.event_gen(yield_nones=False, timeout_s=1):
+                _, types, _, _ = event
 
-            if not line.endswith('\n'):
-                evefile.seek(pos)
-                time.sleep(0.1)
-                continue
+                for t in types:
+                    if t == 'IN_MODIFY':
+                        while True:
+                            pos = evefile.tell()
+                            line = evefile.readline()
+                            if not line:
+                                break
 
-            stats['lines'] = stats.get('lines', 0) + 1
+                            if not line.endswith('\n'):
+                                evefile.seek(pos)
+                                time.sleep(0.1)
+                                continue
 
-            try:
-                record = json.loads(line)
-            except:
-                logging.exception('line = %r', line)
-                stats['errors'] = stats.get('errors', 0) + 1
+                            stats['lines'] = stats.get('lines', 0) + 1
 
-                errors_total += [time.time()]
-                errors_total = list(filter(lambda t: time.time() - t < 24*60*60, errors_total))
-                if len(errors_total) > 10:
-                    logging.error('too many errors within 24 hours, aborting')
-                    break
-                continue
+                            try:
+                                record = json.loads(line)
+                            except:
+                                logging.exception('line = %r', line)
+                                stats['errors'] = stats.get('errors', 0) + 1
 
-            assert 'event_type' in record
-            stats[record['event_type']] = stats.get(record['event_type'], 0) + 1
+                                errors_total += [time.time()]
+                                errors_total = list(filter(lambda t: time.time() - t < 24*60*60, errors_total))
+                                if len(errors_total) > 10:
+                                    logging.error('too many errors within 24 hours, aborting')
+                                    break
+                                continue
 
-            if record['event_type'] == 'alert':
-                notifier.alerts.put(record)
+                            assert 'event_type' in record
+                            stats[record['event_type']] = stats.get(record['event_type'], 0) + 1
 
-            if time.time() - since >= 600:
-                logging.info('stats = %r', stats)
-                stats = {}
-                since = time.time()
+                            if record['event_type'] == 'alert':
+                                notifier.alerts.put(record)
 
-            # TODO Periodically report metrics / stats
-            #      See dump-counters and iface-stat suricata socket commands
-            #      Alternatively can parse suricata stats records
-            #      Specifically monitor suricata dropped packet counts
+                            if time.time() - since >= 600:
+                                logging.info('stats = %r', stats)
+                                stats = {}
+                                since = time.time()
+
+                            # TODO Periodically report metrics / stats
+                            #      See dump-counters and iface-stat suricata socket commands
+                            #      Alternatively can parse suricata stats records
+                            #      Specifically monitor suricata dropped packet counts
+
+                    elif t in ['IN_CLOSE_NOWRITE', 'IN_CLOSE_WRITE']:
+                        reopen = True
+
+                    elif t in ['IN_ACCESS', 'IN_OPEN']:
+                        continue
+
+                    else:
+                        raise Exception('unhandled type: ' + t)
+
+            if reopen:
+                logging.info('detected logfile rotation, reopening file')
+                evefile.close()
+                evefile = open(evefile.name, 'r', encoding='utf-8')
+                time.sleep(1)
+                evefile_notifier = inotify.adapters.Inotify(paths=[evefile.name])
 
         evefile.close()
 
