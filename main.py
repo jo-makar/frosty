@@ -142,7 +142,8 @@ class Parser(threading.Thread):
                             if not line:
                                 break
 
-                            if not line.endswith('\n'):
+                            # Incomplete lines do not get decoded
+                            if isinstance(line, bytes) or not line.endswith('\n'):
                                 evefile.seek(pos)
                                 time.sleep(0.1)
                                 continue
