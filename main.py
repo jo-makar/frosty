@@ -27,18 +27,19 @@ class Downloader(threading.Thread):
                 pass
                 
             remote = module.latest(self.config)
-            assert remote is not None
+            if remote is None:
+                continue
 
             lastupdate[module.__name__] = local if local else datetime.datetime.fromtimestamp(0)
 
             if local is None or local < remote:
                 logging.info('updating %s ruleset', module.__name__)
                 rv = module.install(self.config, self)
-                if rv is None or self.stop:
+                if self.stop:
                     return
-
-                lastupdate[module.__name__] = rv
-                installed = True
+                if rv is not None:
+                    lastupdate[module.__name__] = rv
+                    installed = True
 
         if installed:
             with Suricata() as suri:
@@ -52,17 +53,18 @@ class Downloader(threading.Thread):
                 installed = False
                 for module in modules:
                     remote = module.latest(self.config)
-                    assert remote is not None
+                    if remote is None:
+                        continue
 
-                    if lastupdate[module.__name__] < remote:
+                    if module.__name__ not in lastupdate or lastupdate[module.__name__] < remote:
                         logging.info('updating %s ruleset', module.__name__)
 
                         rv = module.install(self.config, self)
-                        if rv is None or self.stop:
+                        if self.stop:
                             return
-
-                        lastupdate[module.__name__] = rv
-                        installed = True
+                        if rv is not None:
+                            lastupdate[module.__name__] = rv
+                            installed = True
 
                 if installed:
                     with Suricata() as suri:
@@ -152,8 +154,8 @@ class Parser(threading.Thread):
 
                             try:
                                 record = json.loads(line)
-                            except:
-                                logging.exception('line = %r', line)
+                            except Exception as e:
+                                logging.error('error processing line = %r (%s): %s', line, type(line), e)
                                 stats['errors'] = stats.get('errors', 0) + 1
 
                                 errors_total += [time.time()]

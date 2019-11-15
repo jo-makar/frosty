@@ -19,8 +19,8 @@ def _download(url, thread):
 
                 f.write(chunk)
                 f.flush()
-    except:
-        logging.exception('url = %s', url)
+    except Exception as e:
+        logging.error('requests.get() failure: %s', e)
         return None, None
 
     return path, _lastmod(resp.headers['Last-Modified'])
@@ -28,8 +28,8 @@ def _download(url, thread):
 def _lastmod(header):
     try:
         rv = datetime.datetime.strptime(header, '%a, %d %b %Y %H:%M:%S %Z')
-    except:
-        logging.exception('unable to determine when last modified')
+    except Exception as e:
+        logging.error('unable to determine when last modified: %s', e)
         return None
 
     if header.split()[-1] not in ['GMT', 'UTC']:
@@ -39,8 +39,12 @@ def _lastmod(header):
     return pytz.utc.localize(rv).astimezone(tzlocal.get_localzone())
 
 def latest(config):
-    resp = requests.head(_url(config), timeout=100)
-    if not resp.ok:
+    try:
+        resp = requests.head(_url(config), timeout=100)
+        if not resp.ok:
+            return None
+    except Exception as e:
+        logging.error('requests.head() failure: %s', e)
         return None
 
     return _lastmod(resp.headers['Last-Modified'])
@@ -68,7 +72,7 @@ def install(config, thread):
             if os.path.isfile(path) and path.endswith('.rules'):
                 rules += [path]
             
-        logging.info('%u et rules files found', len(rules))
+        logging.info('%u et rule files found', len(rules))
 
         with open('/etc/suricata/rules/osint-suricata-et.rules', 'w', encoding='utf-8') as masterfile:
 
