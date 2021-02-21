@@ -1,7 +1,0 @@
-#!/bin/sh
-
-docker run -d \
-    -v /etc/suricata:/etc/suricata \
-    -v /var/log/suricata:/var/log/suricata \
-    -v /var/run/suricata-command.socket:/var/run/suricata-command.socket \
-    osint-suricata:latest
