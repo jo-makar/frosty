@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from elastic import main_elastic
 from minimal import main_minimal
 
 import argparse
@@ -43,5 +44,4 @@ if __name__ == '__main__':
 
     if args.elastic:
         logging.info('running in elasticsearch mode')
-        raise Exception('FIXME not implemented')
-
+        main_elastic()

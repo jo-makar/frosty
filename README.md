@@ -117,7 +117,43 @@ systemctl enable elasticsearch
 systemctl start kibana
 systemctl enable kibana
 
-FIXME create a /etc/logstash/conf.d/ config before starting
+# define the config before starting
+# refer to https://www.elastic.co/guide/en/logstash/current/plugins-inputs-file.html
+#          https://www.elastic.co/guide/en/logstash/current/plugins-outputs-tcp.html
+#          https://www.elastic.co/guide/en/logstash/current/plugins-outputs-elasticsearch.html
+
+cat <<EOF >/etc/logstash/config.d/100-frosty.conf
+input {
+  file {
+    path => ["/var/log/suricata/eve.json"]
+    codec => "json"
+    mode => "tail"
+    start_position => "end"
+    add_field => { "[@metadata][pipeline]" => "frosty" }
+  }
+}
+
+output {
+  if [@metadata][pipeline] == "frosty" {
+    elasticsearch {
+      action => "index"
+      hosts => ["http://127.0.0.1:9200"]
+      index => "suricata-%{+yyyyMMdd}"
+      # TODO define a template and specify it here
+    }
+    
+    if [event_type] == "alert" {
+      tcp {
+        host => "127.0.0.1"
+        port => 7834 # arbitrary choice
+        mode => "client"
+        codec => "json"
+      }
+    }
+  }
+}
+EOF
+
 systemctl start logstash
 systemctl enable logstash
 ```
