@@ -352,11 +352,12 @@ The generated Kibana links show the records associated with the alerts:
 
 # Elastic mode crons
 - [Delete records older than 90 days](crons/cleanup.py)
- 
-FIXME STOPPED
-- weekly saturday morning kibana? report showing list of hostnames for all http/https for the week
-  - as a table or pie chart by number of connections or bandwidth exchanged
-- weekly saturday morning report showing usual port traffic
-- weekly saturday morning report summarizing alerts
-- weekly saturday morning report identify suricata issues via stats records (eg kernel_drops)
+- [Weekly report of http/https hosts by connection and bandwidth](crons/http-stats.py)
+  - TODO How could this be done as a Kibana visualization or dashboard instead?
+
+## TODO
+- Weekly report of unusual traffic (unusual ports to start)
+- Weekly report summarizing alerts 
+- Weekly report to identify Suricata  performance issues (via stats records, eg kernel_drops)
+- Weekly report showing local network topology
 
