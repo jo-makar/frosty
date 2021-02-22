@@ -1,8 +1,13 @@
+import dateparser
+import requests
+
 import collections
+import datetime
 import json
 import logging
 import queue
 import signal
+import smtplib
 import socket
 import threading
 import time
@@ -70,7 +75,7 @@ class ListenerWorker(threading.Thread):
                     stats['non-alerts'] += 1
                     continue
 
-                # FIXME alert_queue.put(line)
+                alert_queue.put(line)
 
         if buf != b'':
             logging.warning('unused buffer: %r', buf)
@@ -136,27 +141,104 @@ class Notifier(threading.Thread):
 
 
     def run(self):
+        # Get the Kibana index pattern guid (used later when building Kibana urls)
+
+        index_pattern_guid = None
+
+        resp = requests.get('http://127.0.0.1:5601/api/saved_objects/_find',
+                             params = {'type':'index-pattern', 'search':'suricata-*'},
+                            timeout = 100)
+        resp.raise_for_status()
+        for pattern in resp.json()['saved_objects']:
+            guid = pattern.get('id')
+            if guid is None:
+                continue
+            if pattern.get('attributes', {}).get('title') == 'suricata-*':
+                index_pattern_guid = guid
+                break
+
+        if index_pattern_guid is None:
+            logging.error('unable to determine index pattern guid')
+            return
+        logging.debug('index_pattern_guid = %s', index_pattern_guid)
+
+        def mail_alerts(alert_lines):
+            body = 'Subject: suricata alerts\r\nFrom: frosty@localhost\r\n'
+
+            if False:
+                body += '\n'.join([json.dumps(a.decode(), indent=4) for a in alert_lines])
+            else:
+                def get(alert, keys):
+                    curval = alert
+                    for key in keys:
+                        if not isinstance(curval, dict) or key not in curval:
+                            logging.warning('alert missing %s: %r', '.'.join(keys), alert)
+                            return None
+                        curval = curval[key]
+                    return curval
+
+                def url(flowid, flowstart, timestamp):
+                    url = 'http://127.0.0.1:5601/app/discover#/?' + \
+                          '_g=(filters:!(),refreshInterval:(pause:!t,value:0),'
+
+                    start = (dateparser.parse(flowstart) - datetime.timedelta(minutes=5)).isoformat()
+                    end   = (dateparser.parse(timestamp) + datetime.timedelta(minutes=5)).isoformat()
+
+                    url += f"time:(from:'{start}',to:'{end}'))&" + \
+                           '_a=(columns:!(event_type,src_ip,src_port,dest_ip,dest_port,proto,app_proto),' + \
+                           f"filters:!(),index:'{index_pattern_guid}',interval:auto,sort:!()," + \
+                           f"query:(language:kuery,query:'flow_id:{flowid}'))"
+
+                    return url
+
+                valid = False
+                for alert_line in alert_lines:
+                    try:
+                        alert = json.loads(alert_line)
+                    except Exception as e:
+                        logging.error('error processing line = %r: %s', alert_line, e)
+                        continue
+
+                    signature = get(alert, ['alert', 'signature'])
+                    flowid    = get(alert, ['flow_id'])
+                    flowstart = get(alert, ['flow', 'start'])
+                    timestamp = get(alert, ['timestamp'])
+                    if any([x is None for x in [signature, flowid, flowstart, timestamp]]):
+                        continue
+
+                    body += f'{signature}\n{url(flowid, flowstart, timestamp)}\n\n'
+                    valid = True
+
+                if not valid:
+                    return
+
+            smtp = smtplib.SMTP('127.0.0.1')
+            smtp.sendmail('frosty@localhost', 'root@localhost', body)
+            smtp.quit()
+
+            logging.info('sent mail with %d alerts', len(alerts))
+
+        last = time.time()
+
         while not self.__stop:
-            time.sleep(1) # FIXME STOPPED
+            if not alert_queue.empty() and time.time() - last >= 300:
+                alerts = []
+                while not alert_queue.empty():
+                    alerts += [alert_queue.get()]
+                    alert_queue.task_done()
 
+                mail_alerts(alerts)
+                last = time.time()
 
-    def stop(self):
-        self.__stop = True
+            time.sleep(1)
 
+        if not alert_queue.empty():
+            alerts = []
+            while not alert_queue.empty():
+                alerts += [alert_queue.get()]
+                alert_queue.task_done()
 
-class Cleaner(threading.Thread):
-    def __init__(self):
-        threading.Thread.__init__(self)
-        self.daemon = False
-        self.name = 'Cleaner'
-
-        self.__stop = False
-
-
-    def run(self):
-        # FIXME delete records older than 90 days from elasticsearch
-        while not self.__stop:
-            time.sleep(1) # FIXME
+            mail_alerts(alerts)
 
 
     def stop(self):
@@ -166,15 +248,13 @@ class Cleaner(threading.Thread):
 def main_elastic():
     listener = Listener(); listener.start()
     notifier = Notifier(); notifier.start()
-    cleaner = Cleaner(); cleaner.start()
 
-    # Gracefully stop on terminating signal[o
+    # Gracefully stop on terminating signal
 
     def stop(signum, frame):
         logging.info('received signal %s', signal.Signals(signum).name)
         listener.stop(); listener.join()
         notifier.stop(); alert_queue.join(); notifier.join()
-        cleaner.stop(); cleaner.join()
 
     for s in [signal.SIGINT, signal.SIGTERM]:
         signal.signal(s, stop)
@@ -184,7 +264,6 @@ def main_elastic():
     while True:
         if not listener.is_alive():
             notifier.stop(); alert_queue.join(); notifier.join()
-            cleaner.stop(); cleaner.join()
             break
 
         if not notifier.is_alive():
@@ -193,11 +272,6 @@ def main_elastic():
                 alert = alert_queue.get()
                 alert_queue.task_done()
                 logging.error('unhandled alert: %s', alert)
-            cleaner.stop(); cleaner.join()
             break
-
-        if not cleaner.is_alive():
-            listener.stop(); listener.join()
-            notifier.stop(); alert_queue.join(); notifier.join()
 
         time.sleep(1)

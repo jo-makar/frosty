@@ -147,7 +147,7 @@ output {
         host => "127.0.0.1"
         port => 7834 # arbitrary choice
         mode => "client"
-        codec => "json"
+        codec => "json_lines"
       }
     }
   }
@@ -173,6 +173,7 @@ optional arguments:
 Minimal or elastic mode must be specified.  Minimal mode monitors the eve.json output and sends mails to root as alerts are generated.  Elastic mode receives alert records from logstash and generates mails with the associated alert in Kibana.
 
 # Try it out!
+## Minimal mode
 ```sh
 # grep ^alert /etc/suricata/rules/tor.rules | head -1
 alert tcp [101.99.95.201,103.228.53.155,103.234.220.195,103.236.201.88,103.249.28.195,103.253.41.98,103.28.52.93,103.35.74.74,103.75.190.11,104.149.134.118] any -> $HOME_NET any (msg:"ET TOR Known Tor Exit Node Traffic group 1"; reference:url,doc.emergingthreats.net/bin/view/Main/TorRules; threshold: type limit, track by_src, seconds 60, count 1; classtype:misc-attack; flowbits:set,ET.TorIP; sid:2520000; rev:4346; metadata:affected_product Any, attack_target Any, deployment Perimeter, tag TOR, signature_severity Audit, created_at 2008_12_01, updated_at 2021_02_19;)
@@ -196,7 +197,7 @@ Received: from localhost ([127.0.0.1] helo=[127.0.1.1])
         for root@localhost; Sat, 20 Feb 2021 21:26:01 -0500
 Subject: suricata alerts
 From: frosty@localhost
-Message-Id: <E1lDeRd-0002s4-TZ@alpha.attlocal.net>
+Message-Id: <E1lDeRd-0002s4-TZ@localhost>
 Date: Sat, 20 Feb 2021 21:26:01 -0500
 
 {
@@ -310,3 +311,51 @@ Date: Sat, 20 Feb 2021 21:26:01 -0500
     }
 }
 ```
+
+## Elastic mode
+```sh
+# grep ^alert /etc/suricata/rules/tor.rules | head -1
+alert tcp [101.99.95.201,103.228.53.155,103.234.220.195,103.236.201.88,103.249.28.195,103.253.41.98,103.28.52.93,103.35.74.74,103.75.190.11,104.149.134.118] any -> $HOME_NET any (msg:"ET TOR Known Tor Exit Node Traffic group 1"; reference:url,doc.emergingthreats.net/bin/view/Main/TorRules; threshold: type limit, track by_src, seconds 60, count 1; classtype:misc-attack; flowbits:set,ET.TorIP; sid:2520000; rev:4346; metadata:affected_product Any, attack_target Any, deployment Perimeter, tag TOR, signature_severity Audit, created_at 2008_12_01, updated_at 2021_02_19;)
+# nc -w1 -v 101.99.95.201 9001
+Connection to 101.99.95.201 9001 port [tcp/*] succeeded!
+
+notification mails are sent in batches every five minutes
+after no more than five minutes expect the corresponding mail:
+
+$ mail
+"/var/mail/jom": 1 message 1 new
+>N   1 frosty@localhost   Sun Feb 21 19:43 19/1351  suricata alerts
+? 1
+Return-path: <frosty@localhost>
+Envelope-to: root@localhost
+Delivery-date: Sun, 21 Feb 2021 19:43:27 -0500
+Received: from localhost ([127.0.0.1] helo=[127.0.1.1])
+        by localhost with esmtp (Exim 4.92)
+        (envelope-from <frosty@localhost>)
+        id 1lDzJv-00031B-8j
+        for root@localhost; Sun, 21 Feb 2021 19:43:27 -0500
+Subject: suricata alerts
+From: frosty@localhost
+Message-Id: <E1lDzJv-00031B-8j@localhost>
+Date: Sun, 21 Feb 2021 19:43:27 -0500
+
+ET TOR Known Tor Exit Node Traffic group 1
+http://127.0.0.1:5601/app/discover#/?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:'2021-02-21T19:33:30.792578-05:00',to:'2021-02-21T19:43:31.082985-05:00'))&_a=(columns:!(event_type,src_ip,src_port,dest_ip,dest_port,proto,app_proto),filters:!(),index:'0170a7e0-7409-11eb-9879-6bf568a6cc4d',interval:auto,sort:!(),query:(language:kuery,query:'flow_id:1700072559876098'))
+
+ET TOR Known Tor Relay/Router (Not Exit) Node Traffic group 1
+http://127.0.0.1:5601/app/discover#/?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:'2021-02-21T19:33:30.792578-05:00',to:'2021-02-21T19:43:31.082985-05:00'))&_a=(columns:!(event_type,src_ip,src_port,dest_ip,dest_port,proto,app_proto),filters:!(),index:'0170a7e0-7409-11eb-9879-6bf568a6cc4d',interval:auto,sort:!(),query:(language:kuery,query:'flow_id:1700072559876098'))
+```
+
+The generated Kibana show the associated alerts records:
+
+![kibana](kibana.png)
+
+# Elastic mode crons
+FIXME STOPPED
+- delete records older than 90 days, run every day
+- weekly saturday morning kibana? report showing list of hostnames for all http/https for the week
+  - as a table or pie chart by number of connections or bandwidth exchanged
+- weekly saturday morning report showing usual port traffic
+- weekly saturday morning report summarizing alerts
+- weekly saturday morning report identify suricata issues via stats records (eg kernel_drops)
+
