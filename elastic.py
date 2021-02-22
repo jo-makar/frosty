@@ -181,8 +181,8 @@ class Notifier(threading.Thread):
                     url = 'http://127.0.0.1:5601/app/discover#/?' + \
                           '_g=(filters:!(),refreshInterval:(pause:!t,value:0),'
 
-                    start = (dateparser.parse(flowstart) - datetime.timedelta(minutes=5)).isoformat()
-                    end   = (dateparser.parse(timestamp) + datetime.timedelta(minutes=5)).isoformat()
+                    start = (dateparser.parse(flowstart) - datetime.timedelta(minutes=60)).isoformat()
+                    end   = (dateparser.parse(timestamp) + datetime.timedelta(minutes=60)).isoformat()
 
                     url += f"time:(from:'{start}',to:'{end}'))&" + \
                            '_a=(columns:!(event_type,src_ip,src_port,dest_ip,dest_port,proto,app_proto),' + \

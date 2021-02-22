@@ -340,10 +340,10 @@ Message-Id: <E1lDzJv-00031B-8j@localhost>
 Date: Sun, 21 Feb 2021 19:43:27 -0500
 
 ET TOR Known Tor Exit Node Traffic group 1
-http://127.0.0.1:5601/app/discover#/?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:'2021-02-21T19:33:30.792578-05:00',to:'2021-02-21T19:43:31.082985-05:00'))&_a=(columns:!(event_type,src_ip,src_port,dest_ip,dest_port,proto,app_proto),filters:!(),index:'0170a7e0-7409-11eb-9879-6bf568a6cc4d',interval:auto,sort:!(),query:(language:kuery,query:'flow_id:1700072559876098'))
+http://127.0.0.1:5601/app/discover#/?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:'2021-02-21T18:38:30.792578-05:00',to:'2021-02-21T20:38:31.082985-05:00'))&_a=(columns:!(event_type,src_ip,src_port,dest_ip,dest_port,proto,app_proto),filters:!(),index:'0170a7e0-7409-11eb-9879-6bf568a6cc4d',interval:auto,sort:!(),query:(language:kuery,query:'flow_id:1700072559876098'))
 
 ET TOR Known Tor Relay/Router (Not Exit) Node Traffic group 1
-http://127.0.0.1:5601/app/discover#/?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:'2021-02-21T19:33:30.792578-05:00',to:'2021-02-21T19:43:31.082985-05:00'))&_a=(columns:!(event_type,src_ip,src_port,dest_ip,dest_port,proto,app_proto),filters:!(),index:'0170a7e0-7409-11eb-9879-6bf568a6cc4d',interval:auto,sort:!(),query:(language:kuery,query:'flow_id:1700072559876098'))
+http://127.0.0.1:5601/app/discover#/?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:'2021-02-21T18:38:30.792578-05:00',to:'2021-02-21T20:38:31.082985-05:00'))&_a=(columns:!(event_type,src_ip,src_port,dest_ip,dest_port,proto,app_proto),filters:!(),index:'0170a7e0-7409-11eb-9879-6bf568a6cc4d',interval:auto,sort:!(),query:(language:kuery,query:'flow_id:1700072559876098'))
 ```
 
 The generated Kibana show the associated alerts records:
