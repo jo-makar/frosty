@@ -351,8 +351,9 @@ The generated Kibana links show the records associated with the alerts:
 ![kibana](kibana.png)
 
 # Elastic mode crons
+- [Delete records older than 90 days](crons/cleanup.py)
+ 
 FIXME STOPPED
-- delete records older than 90 days, run every day
 - weekly saturday morning kibana? report showing list of hostnames for all http/https for the week
   - as a table or pie chart by number of connections or bandwidth exchanged
 - weekly saturday morning report showing usual port traffic
