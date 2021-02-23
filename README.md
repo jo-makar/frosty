@@ -154,6 +154,11 @@ output {
 }
 EOF
 
+# modify /etc/systemd/system/logstash.service 
+# change TimeoutStopSec=infinity to something like 300
+(cd /etc/systemd/system; cp logstash.service logstash.service.orig; vi logstash.service)
+
+systemctl daemon-reload
 systemctl start logstash
 systemctl enable logstash
 ```
