@@ -50,6 +50,9 @@ if __name__ == '__main__':
     http_entries = {}
     for record in elasticsearch.search(query, start):
         flow_id = record['_source']['flow_id']
+        if 'hostname' not in record['_source']['http']:
+            logging.warning('http record with http.hostname missing (flow_id = %d)', flow_id) 
+            continue
         hostname = record['_source']['http']['hostname']
 
         if flow_id in http_entries:
