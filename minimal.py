@@ -25,15 +25,18 @@ class Parser(threading.Thread):
 
 
     def run(self):
-        evefile = open('/var/log/suricata/eve.json', 'r', encoding='utf-8')
+        open_evefile = lambda: open('/var/log/suricata/eve.json', 'r', encoding='utf-8')
+        start_inotifier = lambda path: inotify.adapters.Inotify(paths=[path])
+
+        evefile = open_evefile()
         evefile.seek(0, os.SEEK_END)
-        inotifier = inotify.adapters.Inotify(paths=[evefile.name])
+        inotifier = start_inotifier(evefile.name)
 
         stats = collections.defaultdict(int)
         last = time.time()
 
         while not self.stop:
-            reopen = False
+            reopen, restart = False, False
             for event in inotifier.event_gen(timeout_s=1):
                 if event is None:
                     continue
@@ -73,14 +76,21 @@ class Parser(threading.Thread):
 
                             break
 
-                    elif t == 'IN_CLOSE_WRITE':
+                    elif t in ['IN_CLOSE_WRITE', 'IN_DELETE_SELF', 'IN_MOVE_SELF', 'IN_IGNORED']:
                         reopen = True
+                        if t == 'IN_IGNORED':
+                            restart = True
 
             if reopen:
                 logging.info('detected file write (eg log rotation), reopening file')
+
                 evefile.close()
-                evefile = open('/var/log/suricata/eve.json', 'r', encoding='utf-8')
+                evefile = open_evefile()
                 stats['reopens'] += 1
+
+                if restart:
+                    inotifier = start_inotifier(evefile.name)
+                    stats['restarts'] += 1
 
             if len(stats) > 0 and time.time() - last >= 3600:
                 logging.info('stats: %s', ', '.join(['%s = %d' % (k, stats[k]) for k in sorted(stats.keys())]))
